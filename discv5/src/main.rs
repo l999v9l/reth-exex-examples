@@ -23,7 +23,7 @@ fn main() -> eyre::Result<()> {
                     // start exex task with discv5
                     Ok(ExEx::new(ctx, disc_v5))
                 })
-                .launch()
+                .launch_with_debug_capabilities()
                 .await?;
 
             handle.wait_for_node_exit().await

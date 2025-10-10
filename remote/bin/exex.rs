@@ -69,7 +69,7 @@ fn main() -> eyre::Result<()> {
         let handle = builder
             .node(EthereumNode::default())
             .install_exex("Remote", |ctx| async move { Ok(exex(ctx, notifications)) })
-            .launch()
+            .launch_with_debug_capabilities()
             .await?;
 
         handle.node.task_executor.spawn_critical("gRPC server", async move {

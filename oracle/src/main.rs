@@ -74,7 +74,7 @@ fn main() -> eyre::Result<()> {
                 })
                 .map(|result| result.map_err(Into::into).and_then(|result| result))
             })
-            .launch()
+            .launch_with_debug_capabilities()
             .await?;
 
         handle.wait_for_node_exit().await
