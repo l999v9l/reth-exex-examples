@@ -248,11 +248,8 @@ impl Database {
             })
             .map(|result| {
                 let (address_str, key_str, data_str) = result?;
-                let data = if data_str == "destroyed" {
-                    U256::ZERO
-                } else {
-                    U256::from_str(&data_str)?
-                };
+                let data =
+                    if data_str == "destroyed" { U256::ZERO } else { U256::from_str(&data_str)? };
                 Ok((Address::from_str(&address_str)?, B256::from_str(&key_str)?, data))
             })
             .collect::<eyre::Result<Vec<_>>>()?;
