@@ -1,6 +1,6 @@
 use crate::proto;
 use alloy_primitives::{Address, BlockHash, Bloom, TxHash, B256, B64, U256};
-use eyre::{eyre, OptionExt};
+use eyre::OptionExt;
 use reth::primitives::Block;
 use std::sync::Arc;
 
@@ -142,7 +142,7 @@ impl TryFrom<&reth::primitives::TransactionSigned> for proto::Transaction {
         let signature = proto::Signature {
             r: transaction.signature().r().to_le_bytes_vec(),
             s: transaction.signature().s().to_le_bytes_vec(),
-            y_parity: transaction.signature().v(),
+            y_parity: transaction.signature().v() as u8 as u32,
         };
         let transaction = match &transaction.clone().into_typed_transaction() {
             reth::primitives::Transaction::Legacy(alloy_consensus::TxLegacy {
@@ -242,27 +242,21 @@ impl TryFrom<&reth::primitives::TransactionSigned> for proto::Transaction {
                 authorization_list,
                 input,
             }) => {
-                // Map over the authorization_list and collect into a Result<Vec<_>, _>
                 let authorization_list: Vec<proto::AuthorizationListItem> = authorization_list
                     .iter()
-                    .map(|authorization| -> Result<proto::AuthorizationListItem, eyre::Error> {
-                        let signature =
-                            authorization.signature().map_err(|_| eyre!("signature missing"))?;
-
-                        Ok(proto::AuthorizationListItem {
-                            authorization: Some(proto::Authorization {
-                                chain_id: authorization.chain_id().to_le_bytes_vec(),
-                                address: authorization.address().to_vec(),
-                                nonce: authorization.nonce(),
-                            }),
-                            signature: Some(proto::Signature {
-                                r: signature.r().to_le_bytes_vec(),
-                                s: signature.s().to_le_bytes_vec(),
-                                y_parity: signature.v(),
-                            }),
-                        })
+                    .map(|authorization| proto::AuthorizationListItem {
+                        authorization: Some(proto::Authorization {
+                            chain_id: authorization.chain_id().to_le_bytes_vec(),
+                            address: authorization.address().to_vec(),
+                            nonce: authorization.nonce(),
+                        }),
+                        signature: Some(proto::Signature {
+                            r: authorization.r().to_le_bytes_vec(),
+                            s: authorization.s().to_le_bytes_vec(),
+                            y_parity: authorization.y_parity() as u32,
+                        }),
                     })
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Vec<_>>();
 
                 proto::transaction::Transaction::Eip7702(proto::TransactionEip7702 {
                     chain_id: *chain_id,
@@ -628,10 +622,15 @@ impl TryFrom<&proto::Transaction> for reth::primitives::TransactionSigned {
     fn try_from(transaction: &proto::Transaction) -> Result<Self, Self::Error> {
         let hash = TxHash::try_from(transaction.hash.as_slice())?;
         let signature = transaction.signature.as_ref().ok_or_eyre("no signature")?;
+        if signature.y_parity > 1 {
+            return Err(eyre::eyre!(alloy_primitives::SignatureError::InvalidParity(
+                signature.y_parity as u64
+            )));
+        }
         let signature = alloy_primitives::Signature::new(
             U256::try_from_le_slice(signature.r.as_slice()).ok_or_eyre("failed to parse r")?,
             U256::try_from_le_slice(signature.s.as_slice()).ok_or_eyre("failed to parse s")?,
-            signature.y_parity,
+            signature.y_parity == 1,
         );
 
         let transaction = match transaction.transaction.as_ref().ok_or_eyre("no transaction")? {
@@ -774,13 +773,12 @@ impl TryFrom<&proto::Transaction> for reth::primitives::TransactionSigned {
                     .map(|authorization| {
                         let signature =
                             authorization.signature.as_ref().ok_or_eyre("no signature")?;
-                        let signature = alloy_primitives::Signature::new(
-                            U256::try_from_le_slice(signature.r.as_slice())
-                                .ok_or_eyre("failed to parse r")?,
-                            U256::try_from_le_slice(signature.s.as_slice())
-                                .ok_or_eyre("failed to parse s")?,
-                            signature.y_parity,
-                        );
+
+                        let r = U256::try_from_le_slice(signature.r.as_slice())
+                            .ok_or_eyre("failed to parse r")?;
+                        let s = U256::try_from_le_slice(signature.s.as_slice())
+                            .ok_or_eyre("failed to parse s")?;
+                        let y_parity = signature.y_parity as u8;
 
                         let authorization =
                             authorization.authorization.as_ref().ok_or_eyre("no authorization")?;
@@ -792,13 +790,18 @@ impl TryFrom<&proto::Transaction> for reth::primitives::TransactionSigned {
                                 .try_into()
                                 .map_err(|_| eyre::eyre!("chain_id must be exactly 8 bytes"))?,
                         );
-
-                        Ok(alloy_eips::eip7702::Authorization {
+                        let authorization = alloy_eips::eip7702::Authorization {
                             chain_id,
                             address: Address::try_from(authorization.address.as_slice())?,
                             nonce: authorization.nonce,
-                        }
-                        .into_signed(signature))
+                        };
+
+                        Ok(alloy_eips::eip7702::SignedAuthorization::new_unchecked(
+                            authorization,
+                            y_parity,
+                            r,
+                            s,
+                        ))
                     })
                     .collect::<eyre::Result<Vec<_>>>()?,
                 input: input.to_vec().into(),
