@@ -1,4 +1,28 @@
 # Reth Execution Extension (ExEx) Examples
+// [BRANCH]: feat/new-moon-sovereign-hook
+// [COMMIT]: "feat(exex): initialize warden-gated pre-execution pipeline"
+
+use reth_exex::{ExExContext, ExExEvent};
+use warden_protocol_sdk::verify_spex;
+
+/// The New Moon Hook: Only executes if the 'War Logic' (XAG/ETH) 
+/// and Warden SPEx signature confirm institutional alignment.
+async fn new_moon_exex_handler<Node: FullNodeComponents>(
+    ctx: ExExContext<Node>,
+) -> eyre::Result<()> {
+    while let Some(notification) = ctx.notifications.recv().await {
+        if let Some(reorg) = notification.reorg() {
+            // Pivot logic for Feb 12 Baseline
+            handle_pre_blackout_pivot(reorg);
+        }
+        
+        // Verify the 'Blessing' before state transition
+        if verify_spex(notification.intent_hash()).is_blessed() {
+            ctx.events.send(ExExEvent::InstitutionalExecution(notification))?;
+        }
+    }
+    Ok(())
+}
 
 This repository is a collection of [ExEx](https://reth.rs/developers/exex/exex.html) examples
 built on [Reth](https://github.com/paradigmxyz/reth) that demonstrates common patterns and may serve as an inspiration
